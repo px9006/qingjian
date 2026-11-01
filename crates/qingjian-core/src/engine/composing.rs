@@ -306,6 +306,14 @@ impl Engine {
                 .is_expression(self.composition.text(), self.zhuyin)
     }
 
+    /// 当前组句的候选会不会随时间变（`sj`）：壳在自己的定时节拍里据此决定要不要重查。
+    ///
+    /// 三个壳都已经有节拍（Windows 的 DLL Poll、macOS 的 NSTimer、Linux 插件的 Poll），
+    /// 缺的只是这个判断 —— 放在 Core 里，各平台一行接入，不必各写一套。
+    pub fn wants_time_refresh(&self) -> bool {
+        !self.composition.is_empty() && shortcut::is_live_time_keyword(self.composition.text())
+    }
+
     /// `vcalc:` / `vbit:` / `vpy:` 这些子模式只在全拼下认。
     ///
     /// 双拼的 `;` 是 ing 键、注音的 `;` 是音节键、形码里字母是编码：带冒号的串在那些方案里另有含义，

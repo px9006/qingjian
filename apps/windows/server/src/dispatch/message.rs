@@ -186,7 +186,7 @@ impl Router {
     /// DLL 组句期间每 80 ms 发一次 `Poll`，正好当节拍用。只在「输入就是 `sj`、还没翻过页」时重查，
     /// 免得把用户已经挪开的高亮打回第一条，也免得给别的组句白花查询开销。
     fn refresh_live_time(&mut self) {
-        if self.focused.is_none() || self.engine.composition().text() != "sj" {
+        if self.focused.is_none() || !self.engine.wants_time_refresh() {
             return;
         }
         // 每一拍（DLL 80 ms 一次）都重查，毫秒那一位才会真跳；只按秒刷的话 `.502` 会冻住

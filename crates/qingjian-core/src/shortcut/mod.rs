@@ -112,7 +112,7 @@ pub fn candidates_with_modes(
 ) -> Vec<Candidate> {
     let texts: Vec<String> = match input {
         "rq" => date_forms(now),
-        "sj" => time_forms(now),
+        calendar::TIME_KEYWORD => time_forms(now),
         "xq" => weekday_forms(now),
         _ => match input.strip_prefix(expression) {
             Some(body) => expression_forms(body, sub_modes),
@@ -120,6 +120,15 @@ pub fn candidates_with_modes(
         },
     };
     as_candidates(texts)
+}
+
+/// 这几个词的候选**随时间变**（`sj` 的秒与毫秒）：壳的定时节拍里要重查，
+/// 否则组句停着不动时那几位就冻在查询那一刻。`rq` / `xq` 一天才变，不在其列。
+///
+/// 判断放 Core 是因为三个壳都已经有节拍（Windows 的 DLL Poll 80 ms、macOS 的 NSTimer、
+/// Linux 插件的 Poll），共同的缺口只是「什么时候该重查」——各壳问一句就够。
+pub fn is_live_time_keyword(text: &str) -> bool {
+    text == calendar::TIME_KEYWORD
 }
 
 /// 快捷写法包成候选。
@@ -175,9 +184,21 @@ fn expression_forms(body: &str, sub_modes: bool) -> Vec<String> {
 fn mode_forms(mode: modes::Mode<'_>) -> Vec<String> {
     match mode {
         modes::Mode::Calc { body } => calc_forms(body),
-        modes::Mode::Bit { width, body } => bitwise::evaluate(body, width)
-            .map(|result| result.forms())
-            .unwrap_or_default(),
+        modes::Mode::Bit { width, body } => {
+            let Some(result) = bitwise::evaluate(body, width) else {
+                return Vec::new();
+            };
+            let forms = result.forms();
+            // 与老四则的 `1+2=3` 同一套：第二条就是「敲的式子 = 结果」
+            match forms.first() {
+                Some(first) if !body.contains('=') && body.trim() != first.as_str() => {
+                    let mut out = vec![first.clone(), format!("{body}={first}")];
+                    out.extend(forms.into_iter().skip(1));
+                    out
+                }
+                _ => forms,
+            }
+        }
         modes::Mode::Python { body } => python::run_python(body)
             .filter(|out| !out.is_empty())
             .map(|out| vec![out])
@@ -185,7 +206,7 @@ fn mode_forms(mode: modes::Mode<'_>) -> Vec<String> {
     }
 }
 
-/// 精确计算的候选：精确形式、LaTeX、数值近似、中文小写与大写、分数读法。
+/// 精确计算的候选：精确形式、「式子 = 结果」、LaTeX、数值近似、中文小写与大写、分数读法。
 /// 同一条文字只留一次（大整数时精确形式与数值形式往往一模一样）。
 fn calc_forms(body: &str) -> Vec<String> {
     let Some(output) = python::calculate(body) else {
@@ -198,8 +219,19 @@ fn calc_forms(body: &str) -> Vec<String> {
         }
     };
     push(output.exact.clone());
+    // 与老四则 `1+2=3` 一致：第二条是「敲的式子 = 结果」
+    if !output.exact.is_empty() && !body.contains('=') && body.trim() != output.exact {
+        push(format!("{body}={}", output.exact));
+    }
+    // 输入式子本身的 LaTeX：转格式用，`sqrt(2)/2` → `\frac{\sqrt{2}}{2}`
+    if output.latex_input != output.latex {
+        push(output.latex_input.clone());
+    }
     push(output.latex.clone());
-    push(output.numeric.clone());
+    // 整数时数值形式（`1234.000000000000`）没信息，不要
+    if output.integer.is_none() {
+        push(output.numeric.clone());
+    }
     // 整数给中文大小写：这是输入法里最常要的一种「换个写法」
     if let Some(integer) = &output.integer {
         push(numeral::chinese_lower(integer));
@@ -209,6 +241,11 @@ fn calc_forms(body: &str) -> Vec<String> {
         && denominator != "1"
     {
         push(format!("{denominator}分之{numerator}"));
+        push(format!(
+            "{}分之{}",
+            numeral::chinese_upper(denominator),
+            numeral::chinese_upper(numerator)
+        ));
     }
     forms
 }

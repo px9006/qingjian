@@ -78,6 +78,9 @@ pub fn date_forms(now: &Zoned) -> Vec<String> {
     ]
 }
 
+/// 时间快捷词的输入码（`sj`）。壳按 [`super::is_live_time_keyword`] 判断要不要随钟重查。
+pub const TIME_KEYWORD: &str = "sj";
+
 /// `sj`：现在。24 / 12 小时制、带秒、带毫秒、中文读法、纯数字、完整日期时间、文件名友好格式。
 pub fn time_forms(now: &Zoned) -> Vec<String> {
     let (year, month, day) = (now.year(), now.month(), now.day());
