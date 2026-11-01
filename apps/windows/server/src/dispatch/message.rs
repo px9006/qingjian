@@ -181,9 +181,30 @@ impl Router {
         }
     }
 
+    /// 时间候选（`sj`）要跟着钟走：组句停在那儿不动时，秒与毫秒也该继续跳。
+    ///
+    /// DLL 组句期间每 80 ms 发一次 `Poll`，正好当节拍用。只在「输入就是 `sj`、还没翻过页」时重查，
+    /// 免得把用户已经挪开的高亮打回第一条，也免得给别的组句白花查询开销。
+    fn refresh_live_time(&mut self) {
+        if self.focused.is_none() || self.engine.composition().text() != "sj" {
+            return;
+        }
+        // 每一拍（DLL 80 ms 一次）都重查，毫秒那一位才会真跳；只按秒刷的话 `.502` 会冻住
+        let saved_highlight = self.highlight;
+        let saved_navigated = self.navigated;
+        self.recompose();
+        // 重查会把高亮打回第一条：用户已经翻页 / 挪过位置的话，放回去
+        if saved_navigated {
+            let count = self.candidate_count();
+            self.highlight = saved_highlight.min(count.saturating_sub(1));
+            self.navigated = true;
+        }
+    }
+
     /// 云联想轮询：聚焦会话拉一次异步结果回最新一帧，否则回空帧。释义兜底与本地整句模型也借这个节拍收。
     fn handle_poll(&mut self, session: SessionId) -> ServerMessage {
         self.tick();
+        self.refresh_live_time();
         let learned = self.engine.poll_glosses();
         if learned > 0 {
             tracing::info!(learned, "释义兜底写入个人释义表");

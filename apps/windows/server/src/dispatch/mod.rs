@@ -106,6 +106,9 @@ pub struct Router {
     /// 上次把学习数据落盘的时间。
     last_flush: Instant,
 
+    /// 上一次刷新「时间」候选时的 Unix 秒。`sj` 停在那儿不动时也要跟着钟跳，靠它判断该不该重查。
+    last_time_second: Option<i64>,
+
     /// 配置热加载状态；`None` 表示不热加载。
     reload: Option<ConfigReload>,
 
@@ -187,6 +190,7 @@ impl Router {
             selection_seq: 0,
             sentence: None,
             notice: None,
+            last_time_second: None,
             candidate_translation: None,
             highlight: 0,
             grid: None,
