@@ -11,9 +11,12 @@
 //! - `vuuid`（全拼下问字键是 `u` 时直接 `uuid`）出 UUID，`vts` 出时间戳（[`generated_forms`]）；值随机或随时间变，
 //!   由 Engine 按组句缓存，不走 [`candidates`]。
 
+mod bitwise;
 mod calendar;
 mod evaluator;
+mod modes;
 mod numeral;
+mod python;
 mod uuid_forms;
 
 use jiff::Zoned;
@@ -76,10 +79,10 @@ pub fn could_be_unicode(body: &str) -> bool {
     hex.len() <= MAX_CODEPOINT_DIGITS && hex.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// 表达式模式下允许敲进缓冲区的非字母字符：数字与四则运算符号。
-/// 字母（`x` 当乘号）本来就能进缓冲区，不在此列。
+/// 表达式模式下允许敲进缓冲区的非字母字符：数字、四则运算符号，以及子模式要用的冒号与逗号。
+/// 字母（`x` 当乘号、`sin` 这种函数名）本来就能进缓冲区，不在此列。
 pub fn is_expression_char(c: char) -> bool {
-    c.is_ascii_digit() || matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '.' | '^')
+    c.is_ascii_digit() || matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '.' | '^' | ':' | ',' | '%' | ';' | '：')
 }
 
 /// 屏幕键盘上的 `c` 在算式里当什么：乘除号（`×` `÷`）换成 `*` `/`，其余算式字符原样，不是算式字符为 `None`。
@@ -94,12 +97,25 @@ pub fn expression_char(c: char) -> Option<char> {
 
 /// 按输入算快捷候选；不是快捷输入时为空。`expression` 是表达式键；`now` 由调用方给，测试可固定时间。
 pub fn candidates(input: &str, expression: char, now: &Zoned) -> Vec<Candidate> {
+    candidates_with_modes(input, expression, now, true)
+}
+
+/// 同 [`candidates`]，`sub_modes` 决定认不认 `vcalc:` / `vbit:` / `vpy:` 这些子模式。
+///
+/// 子模式只在全拼下开着：双拼、注音、形码里缓冲区里的字母另有含义（`;` 是双拼的 ing 键、
+/// 是辅码触发键），把带冒号的串当子模式解析会把正常输入吃掉。
+pub fn candidates_with_modes(
+    input: &str,
+    expression: char,
+    now: &Zoned,
+    sub_modes: bool,
+) -> Vec<Candidate> {
     let texts: Vec<String> = match input {
         "rq" => date_forms(now),
         "sj" => time_forms(now),
         "xq" => weekday_forms(now),
         _ => match input.strip_prefix(expression) {
-            Some(body) => expression_forms(body),
+            Some(body) => expression_forms(body, sub_modes),
             None => Vec::new(),
         },
     };
@@ -136,7 +152,13 @@ const AMOUNT_FRACTION_DIGITS: usize = 2;
 
 /// 表达式键之后的部分：一个数出中文数字与金额，四位年份加月日的日期出日期写法，其余当四则运算出结果与「算式=结果」。
 /// 顺序是要紧的：`1998` 与 `1998.3` 是数字与小数，先于日期；四位年份的 `1998-3-8` 才当日期，落在算式之前。
-fn expression_forms(body: &str) -> Vec<String> {
+fn expression_forms(body: &str, sub_modes: bool) -> Vec<String> {
+    // 子模式优先：`calc:` / `bit:` / `py:` 这些带冒号的，认出来就只走那一条，不再按四则去猜
+    if sub_modes
+        && let Some(mode) = modes::parse(body)
+    {
+        return mode_forms(mode);
+    }
     if let Some(forms) = number_forms(body) {
         return forms;
     }
@@ -147,6 +169,48 @@ fn expression_forms(body: &str) -> Vec<String> {
         Some(result) => vec![result.clone(), format!("{body}={result}")],
         None => Vec::new(),
     }
+}
+
+/// 子模式的候选。
+fn mode_forms(mode: modes::Mode<'_>) -> Vec<String> {
+    match mode {
+        modes::Mode::Calc { body } => calc_forms(body),
+        modes::Mode::Bit { width, body } => bitwise::evaluate(body, width)
+            .map(|result| result.forms())
+            .unwrap_or_default(),
+        modes::Mode::Python { body } => python::run_python(body)
+            .filter(|out| !out.is_empty())
+            .map(|out| vec![out])
+            .unwrap_or_default(),
+    }
+}
+
+/// 精确计算的候选：精确形式、LaTeX、数值近似、中文小写与大写、分数读法。
+/// 同一条文字只留一次（大整数时精确形式与数值形式往往一模一样）。
+fn calc_forms(body: &str) -> Vec<String> {
+    let Some(output) = python::calculate(body) else {
+        return Vec::new();
+    };
+    let mut forms: Vec<String> = Vec::new();
+    let mut push = |text: String| {
+        if !text.is_empty() && !forms.contains(&text) {
+            forms.push(text);
+        }
+    };
+    push(output.exact.clone());
+    push(output.latex.clone());
+    push(output.numeric.clone());
+    // 整数给中文大小写：这是输入法里最常要的一种「换个写法」
+    if let Some(integer) = &output.integer {
+        push(numeral::chinese_lower(integer));
+        push(numeral::chinese_upper(integer));
+    }
+    if let Some((numerator, denominator)) = &output.fraction
+        && denominator != "1"
+    {
+        push(format!("{denominator}分之{numerator}"));
+    }
+    forms
 }
 
 /// 单个非负数（`123`、`123.5`）：中文数字在前，金额在后；小数超过两位没有金额写法。

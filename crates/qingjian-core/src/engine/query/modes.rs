@@ -18,7 +18,12 @@ impl Engine {
         let mut items = if shortcut::is_generated_keyword(body) {
             self.generated_candidates(body)
         } else {
-            shortcut::candidates(scope, self.modes().expression, &jiff::Zoned::now())
+            shortcut::candidates_with_modes(
+                scope,
+                self.modes().expression,
+                &jiff::Zoned::now(),
+                self.expression_sub_modes(),
+            )
         };
         if let Some(candidate) = self.english_word_candidate(scope) {
             items.push(candidate);
@@ -178,13 +183,16 @@ impl Engine {
                 let tail = if english.is_some() {
                     scope.to_owned()
                 } else {
-                    format!("{prefix}{}", self.marked_rest(body))
+                    // 问字的问题不是拼音：不去按音节切分显示，`hspn` 就显示 `hspn`
+                    format!("{prefix}{body}")
                 };
                 let mut items: Vec<Candidate> = english.into_iter().collect();
                 if !items.is_empty() && scope == shortcut::UUID_KEYWORD {
                     items.extend(self.generated_candidates(shortcut::UUID_KEYWORD));
                 }
-                items.extend(chaizi_candidates(body));
+                // 手上可能带着分隔符（`um'u'mu`）：拆字表里是连写的部件读音，查之前去掉
+                let keys: String = body.chars().filter(|c| *c != '\'').collect();
+                items.extend(chaizi_candidates(&keys));
                 (CandidateList { items }, tail)
             }
         };
@@ -199,7 +207,8 @@ impl Engine {
             decoded_keys: self.shuangpin.is_some() || self.zhuyin,
             shuangpin_raw_preedit: false,
             shuangpin_raw_window: false,
-            typed_display: None,
+            // 问字模式敲的不是拼音：拼音行原样显示，不按音节补 `'`
+            typed_display: Some(scope.to_owned()),
             typed_case: None,
             pinyin_choices: Vec::new(),
             correction: None,
