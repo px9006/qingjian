@@ -64,3 +64,27 @@ impl KeyboardPalette {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qingjian_render::Theme;
+
+    /// 方角主题（墨岩）的面板圆角必须原样传到壳：Kotlin 那边 `Ink.corner()` 就是按
+    /// `palette.boardRadius == 0` 把所有面板抹成直角的。
+    #[test]
+    fn square_theme_reaches_the_palette() {
+        let slate = Theme::builtin("slate", true).expect("内置主题里有墨岩");
+        let palette = KeyboardPalette::new(&slate);
+        assert_eq!(palette.radius, Some(0.0), "工具栏卡片与长按气泡的圆角");
+        assert_eq!(palette.key_radius, Some(0.0), "按键的圆角");
+    }
+
+    /// 圆角主题不受影响：缺省值仍是 `None`，壳用自己的缺省。
+    #[test]
+    fn rounded_theme_keeps_the_shell_default() {
+        let qingjian = Theme::builtin("qingjian", true).expect("内置主题里有青简");
+        let palette = KeyboardPalette::new(&qingjian);
+        assert!(palette.radius.is_none_or(|radius| radius > 0.0));
+    }
+}
